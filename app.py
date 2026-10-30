@@ -18,7 +18,7 @@ with st.sidebar:
     horizon = st.slider("Forecast horizon (bars)", min_value=1, max_value=12, value=3)
     test_fraction = st.slider("Final test fraction", min_value=0.15, max_value=0.40, value=0.25, step=0.05)
     threshold = st.slider("Minimum probability for directional label", min_value=0.50, max_value=0.80, value=0.58, step=0.01)
-       data_choice = st.selectbox(
+    data_choice = st.selectbox(
     "Choose data source",
     ["SPY historical data", "Synthetic demo data", "Upload my own CSV"]
 )
