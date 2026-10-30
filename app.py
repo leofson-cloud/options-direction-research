@@ -18,15 +18,36 @@ with st.sidebar:
     horizon = st.slider("Forecast horizon (bars)", min_value=1, max_value=12, value=3)
     test_fraction = st.slider("Final test fraction", min_value=0.15, max_value=0.40, value=0.25, step=0.05)
     threshold = st.slider("Minimum probability for directional label", min_value=0.50, max_value=0.80, value=0.58, step=0.01)
-    uploaded = st.file_uploader("Upload OHLCV CSV (optional)", type=["csv"])
-    st.caption("Required columns: timestamp, open, high, low, close, volume")
+   data_choice = st.selectbox(
+    "Choose data source",
+    ["SPY historical data", "Synthetic demo data", "Upload my own CSV"]
+)
 
-if uploaded:
-    raw = pd.read_csv(uploaded)
-    source_label = "Uploaded CSV"
-else:
+uploaded = None
+if data_choice == "Upload my own CSV":
+    uploaded = st.file_uploader("Upload OHLCV CSV", type=["csv"])
+
+st.caption("Required columns: timestamp, open, high, low, close, volume")
+
+if data_choice == "SPY historical data":
+    spy_path = Path(__file__).parent / "data" / "spy_5y_daily.csv"
+    if spy_path.exists():
+        raw = pd.read_csv(spy_path)
+        source_label = "SPY historical data"
+    else:
+        st.error("SPY data file not found in the data folder.")
+        st.stop()
+
+elif data_choice == "Synthetic demo data":
     raw = make_demo_data()
     source_label = "Synthetic demo data"
+
+else:
+    if uploaded is None:
+        st.info("Please upload an OHLCV CSV file to continue.")
+        st.stop()
+    raw = pd.read_csv(uploaded)
+    source_label = "Uploaded CSV"
 
 st.subheader("1. Input data")
 st.write(f"Data source: **{source_label}** · {len(raw):,} rows")
