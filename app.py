@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-from engine import evaluate_models, prepare_features, make_demo_data
+from engine import evaluate_models, evaluate_walk_forward, prepare_features, make_demo_data
 
 st.set_page_config(page_title="Options Direction Research Lab", layout="wide")
 st.title("Options Direction Research Lab")
@@ -80,8 +80,27 @@ try:
         if c in log:
             log[c] = log[c].map({1: "UP", 0: "DOWN", -1: "NO TRADE"})
     st.dataframe(log.tail(50), use_container_width=True)
+    st.subheader("4. Walk-forward validation")
+    st.caption(
+        "Expanding-window validation tests the models across multiple "
+        "chronological periods. These results are research estimates, "
+        "not evidence of a profitable trading strategy."
+    )
 
-    st.subheader("4. Current feature snapshot")
+    walk_results = evaluate_walk_forward(
+        features,
+        y,
+        n_splits=5,
+        initial_train_fraction=0.50,
+        horizon=horizon
+    )
+
+    st.write("Average performance across the test periods")
+    st.dataframe(walk_results["summary"], use_container_width=True)
+
+    st.write("Individual test-period results")
+    st.dataframe(walk_results["folds"], use_container_width=True)
+    st.subheader("5. Current feature snapshot")
     st.dataframe(features.tail(1).T.rename(columns={features.tail(1).index[0]: "latest value"}), use_container_width=True)
     st.download_button("Download prediction log CSV", log.to_csv(index=False), "prediction_log.csv", "text/csv")
 except Exception as e:
