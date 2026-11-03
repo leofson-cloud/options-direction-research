@@ -120,3 +120,138 @@ def evaluate_models(X, y, test_fraction=0.25, threshold=0.58):
     })
     return {"summary": pd.DataFrame(metrics).sort_values("model").reset_index(drop=True),
             "predictions": log, "split_index": split}
+
+def evaluate_walk_forward(X, y, n_splits=5, initial_train_fraction=0.50, horizon=3):
+    """
+    Expanding-window chronological validation.
+
+    Each fold trains only on earlier observations.
+    The final `horizon` training rows are purged to prevent
+    training labels from looking into the test period.
+    """
+    n = len(X)
+
+    if n_splits < 2:
+        raise ValueError("Use at least 2 walk-forward splits.")
+
+    initial_train = int(n * initial_train_fraction)
+
+    if initial_train - horizon < 50:
+        raise ValueError("Not enough initial training data.")
+
+    remaining = n - initial_train
+
+    if remaining < n_splits * 20:
+        raise ValueError("Not enough observations for the requested test windows.")
+
+    models_template = {
+        "Logistic regression": lambda: make_pipeline(
+            StandardScaler(),
+            LogisticRegression(max_iter=1000, class_weight="balanced")
+        ),
+        "Random forest": lambda: RandomForestClassifier(
+            n_estimators=250,
+            max_depth=5,
+            min_samples_leaf=15,
+            class_weight="balanced_subsample",
+            random_state=7,
+            n_jobs=-1
+        ),
+        "Gradient boosting": lambda: HistGradientBoostingClassifier(
+            max_iter=120,
+            max_leaf_nodes=15,
+            learning_rate=0.06,
+            l2_regularization=1.0,
+            random_state=7
+        ),
+    }
+
+    fold_results = []
+    prediction_results = []
+
+    for fold in range(n_splits):
+        test_start = initial_train + (remaining * fold // n_splits)
+        test_end = initial_train + (remaining * (fold + 1) // n_splits)
+
+        train_end = test_start - horizon
+
+        X_train = X.iloc[:train_end]
+        y_train = y.iloc[:train_end]
+
+        X_test = X.iloc[test_start:test_end]
+        y_test = y.iloc[test_start:test_end]
+
+        if len(X_test) == 0 or y_train.nunique() < 2:
+            raise ValueError(
+                f"Insufficient data or only one training class in fold {fold + 1}."
+            )
+
+        probabilities = {}
+
+        for name, factory in models_template.items():
+            model = factory()
+            model.fit(X_train, y_train)
+
+            probabilities[name] = model.predict_proba(X_test)[:, 1]
+
+        ensemble_prob = np.mean(
+            np.column_stack(list(probabilities.values())),
+            axis=1
+        )
+        ensemble_pred = (ensemble_prob >= 0.5).astype(int)
+
+        fold_models = dict(probabilities)
+        fold_models["Equal-weight ensemble"] = ensemble_prob
+
+        base_probability = float(y_train.mean())
+        baseline_pred = int(base_probability >= 0.5)
+
+        fold_models["Train-majority baseline"] = np.full(
+            len(y_test), base_probability
+        )
+
+        for name, prob in fold_models.items():
+            pred = (prob >= 0.5).astype(int)
+
+            fold_results.append({
+                "fold": fold + 1,
+                "model": name,
+                "train_rows": len(X_train),
+                "test_rows": len(X_test),
+                "accuracy": accuracy_score(y_test, pred),
+                "balanced_accuracy": balanced_accuracy_score(y_test, pred),
+                "brier_score": brier_score_loss(y_test, prob),
+            })
+
+        prediction_results.append(pd.DataFrame({
+            "fold": fold + 1,
+            "actual": y_test.to_numpy(),
+            "ensemble_up_probability": ensemble_prob,
+            "ensemble_direction": ensemble_pred,
+        }, index=y_test.index))
+
+    folds = pd.DataFrame(fold_results)
+
+    summary = (
+        folds.groupby("model")
+        .agg(
+            accuracy_mean=("accuracy", "mean"),
+            accuracy_std=("accuracy", "std"),
+            balanced_accuracy_mean=("balanced_accuracy", "mean"),
+            balanced_accuracy_std=("balanced_accuracy", "std"),
+            brier_score_mean=("brier_score", "mean"),
+            brier_score_std=("brier_score", "std"),
+            total_test_rows=("test_rows", "sum"),
+        )
+        .reset_index()
+        .sort_values("model")
+    )
+
+    predictions = pd.concat(prediction_results).sort_index()
+
+    return {
+        "summary": summary,
+        "folds": folds,
+        "predictions": predictions.reset_index(drop=True),
+    }
+
