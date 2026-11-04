@@ -420,4 +420,4 @@ def analyze_market_regimes(
     result["volatility_threshold_pct"] = volatility_threshold
     result["market_regime"] = regime
 
-return result
+    return result
