@@ -1,7 +1,7 @@
 from pathlib import Path
 import pandas as pd
 import streamlit as st
-from engine import evaluate_models, evaluate_walk_forward, prepare_features, make_demo_data
+from engine import evaluate_models, evaluate_walk_forward, analyze_market_regimes, prepare_features, make_demo_data
 
 st.set_page_config(page_title="Options Direction Research Lab", layout="wide")
 st.title("Options Direction Research Lab")
@@ -100,7 +100,52 @@ try:
 
     st.write("Individual test-period results")
     st.dataframe(walk_results["folds"], use_container_width=True)
-    st.subheader("5. Current feature snapshot")
+    st.subheader("5. Market Regime Analysis")
+    st.caption(
+        "Classifies historical market conditions using moving averages, "
+        "trend strength, and rolling volatility. This analysis uses "
+        "historical information only and does not predict future prices."
+    )
+
+    regime_results = analyze_market_regimes(raw)
+
+    st.write("Current market regime")
+    latest_regime = regime_results.iloc[-1]
+
+    st.metric(
+        "Latest classification",
+        latest_regime["market_regime"]
+    )
+
+    regime_columns = [
+        "timestamp",
+        "close",
+        "sma_20",
+        "sma_50",
+        "adx_14",
+        "volatility_20_pct",
+        "market_regime"
+    ]
+
+    st.write("Most recent market conditions")
+    st.dataframe(
+        regime_results[regime_columns].tail(10),
+        use_container_width=True
+    )
+
+    st.write("Historical regime distribution")
+    regime_counts = (
+        regime_results["market_regime"]
+        .value_counts()
+        .rename_axis("Market regime")
+        .reset_index(name="Number of periods")
+    )
+
+    st.dataframe(
+        regime_counts,
+        use_container_width=True
+    )
+    st.subheader("6. Current feature snapshot")
     st.dataframe(features.tail(1).T.rename(columns={features.tail(1).index[0]: "latest value"}), use_container_width=True)
     st.download_button("Download prediction log CSV", log.to_csv(index=False), "prediction_log.csv", "text/csv")
 except Exception as e:
