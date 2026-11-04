@@ -254,4 +254,170 @@ def evaluate_walk_forward(X, y, n_splits=5, initial_train_fraction=0.50, horizon
         "folds": folds,
         "predictions": predictions.reset_index(drop=True),
     }
+def analyze_market_regimes(
+    raw,
+    adx_period=14,
+    volatility_period=20,
+    trend_short=20,
+    trend_long=50
+):
+    """
+    Classify historical market conditions using information available
+    at each point in time. No future prices are used.
+    """
+    df = _validate(raw)
 
+    close = df["close"]
+    high = df["high"]
+    low = df["low"]
+
+    # Trend direction: short and long moving averages
+    sma_short = close.rolling(
+        trend_short,
+        min_periods=trend_short
+    ).mean()
+
+    sma_long = close.rolling(
+        trend_long,
+        min_periods=trend_long
+    ).mean()
+
+    # Average True Range (ATR)
+    previous_close = close.shift(1)
+
+    true_range = pd.concat(
+        [
+            high - low,
+            (high - previous_close).abs(),
+            (low - previous_close).abs()
+        ],
+        axis=1
+    ).max(axis=1)
+
+    atr = true_range.ewm(
+        alpha=1 / adx_period,
+        adjust=False,
+        min_periods=adx_period
+    ).mean()
+
+    # Directional movement for ADX
+    up_move = high.diff()
+    down_move = -low.diff()
+
+    plus_dm = up_move.where(
+        (up_move > down_move) & (up_move > 0),
+        0.0
+    )
+
+    minus_dm = down_move.where(
+        (down_move > up_move) & (down_move > 0),
+        0.0
+    )
+
+    plus_di = (
+        100
+        * plus_dm.ewm(
+            alpha=1 / adx_period,
+            adjust=False,
+            min_periods=adx_period
+        ).mean()
+        / atr
+    )
+
+    minus_di = (
+        100
+        * minus_dm.ewm(
+            alpha=1 / adx_period,
+            adjust=False,
+            min_periods=adx_period
+        ).mean()
+        / atr
+    )
+
+    directional_sum = (plus_di + minus_di).replace(0, np.nan)
+
+    dx = (
+        100
+        * (plus_di - minus_di).abs()
+        / directional_sum
+    )
+
+    adx = dx.ewm(
+        alpha=1 / adx_period,
+        adjust=False,
+        min_periods=adx_period
+    ).mean()
+
+    # Rolling volatility, measured as a percentage
+    returns = close.pct_change()
+
+    volatility = (
+        returns.rolling(
+            volatility_period,
+            min_periods=volatility_period
+        ).std()
+        * 100
+    )
+
+    # Compare volatility with the previous 252 bars.
+    # Shifting by one bar prevents the current value from
+    # influencing its own comparison threshold.
+    volatility_threshold = (
+        volatility.rolling(
+            252,
+            min_periods=60
+        ).quantile(0.75).shift(1)
+    )
+
+    # Only classify rows with sufficient historical information
+    valid = (
+        sma_long.notna()
+        & adx.notna()
+        & volatility.notna()
+        & volatility_threshold.notna()
+    )
+
+    regime = pd.Series(
+        "Insufficient history",
+        index=df.index,
+        dtype="object"
+    )
+
+    # Trend conditions
+    uptrend = (
+        (close > sma_short)
+        & (sma_short > sma_long)
+        & (adx >= 20)
+    )
+
+    downtrend = (
+        (close < sma_short)
+        & (sma_short < sma_long)
+        & (adx >= 20)
+    )
+
+    # Start with sideways conditions for valid rows
+    regime.loc[valid] = "Sideways"
+
+    regime.loc[valid & uptrend] = "Uptrend"
+    regime.loc[valid & downtrend] = "Downtrend"
+
+    # High volatility takes priority over trend classification
+    high_volatility = (
+        valid
+        & (volatility > volatility_threshold)
+    )
+
+    regime.loc[high_volatility] = "High volatility"
+
+    # Return the measurements and classification
+    result = df[["timestamp", "close"]].copy()
+
+    result["sma_20"] = sma_short
+    result["sma_50"] = sma_long
+    result["adx_14"] = adx
+    result["volatility_20_pct"] = volatility
+    result["volatility_threshold_pct"] = volatility_threshold
+    result["market_regime"] = regime
+
+return result
